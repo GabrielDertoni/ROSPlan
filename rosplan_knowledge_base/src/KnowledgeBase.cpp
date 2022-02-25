@@ -429,16 +429,39 @@ namespace KCL_rosplan {
             }
 
             // check if function already exists
+            bool function_exists = false;
             std::vector<rosplan_knowledge_msgs::KnowledgeItem>::iterator pit;
             for(pit=model_functions.begin(); pit!=model_functions.end(); pit++) {
                 if(KnowledgeComparitor::containsKnowledge(msg, *pit)) {
-                    ROS_INFO("KCL: (%s) Updating function (= (%s%s) %f)", ros::this_node::getName().c_str(), msg.attribute_name.c_str(), param_str.c_str(), msg.function_value);
-                    pit->function_value = msg.function_value;
-                    return;
+                    switch(msg.assign_op) {
+                    case rosplan_knowledge_msgs::KnowledgeItem::AP_ASSIGN:
+                        ROS_INFO("KCL: (%s) Updating function (= (%s%s) %f)", ros::this_node::getName().c_str(), msg.attribute_name.c_str(), param_str.c_str(), msg.function_value);
+                        pit->function_value = msg.function_value;
+                        break;                        
+                    case rosplan_knowledge_msgs::KnowledgeItem::AP_SCALE_UP:
+                    case rosplan_knowledge_msgs::KnowledgeItem::AP_INCREASE:
+                        pit->function_value = pit->function_value + msg.function_value;
+                        ROS_INFO("KCL: (%s) Increasing function (= (%s%s) %f)", ros::this_node::getName().c_str(), msg.attribute_name.c_str(), param_str.c_str(), pit->function_value);
+                        break;
+                    case rosplan_knowledge_msgs::KnowledgeItem::AP_SCALE_DOWN:
+                    case rosplan_knowledge_msgs::KnowledgeItem::AP_DECREASE:
+                        pit->function_value = pit->function_value - msg.function_value;
+                        ROS_INFO("KCL: (%s) Decreasing function (= (%s%s) %f)", ros::this_node::getName().c_str(), msg.attribute_name.c_str(), param_str.c_str(), pit->function_value);
+                        break;
+                    case rosplan_knowledge_msgs::KnowledgeItem::AP_ASSIGN_CTS:
+                        ROS_WARN("KCL: (%s) Continuous numeric effects not implemented in function updating.", ros::this_node::getName().c_str());
+                        break;
+                    }
+                    function_exists = true;
+                    break;
                 }
             }
-            ROS_INFO("KCL: (%s) Adding function (= (%s%s) %f)", ros::this_node::getName().c_str(), msg.attribute_name.c_str(), param_str.c_str(), msg.function_value);
-            model_functions.push_back(msg);
+            if (!function_exists && msg.assign_op==rosplan_knowledge_msgs::KnowledgeItem::AP_ASSIGN) {
+                ROS_INFO("KCL: (%s) Adding function (= (%s%s) %f)", ros::this_node::getName().c_str(), msg.attribute_name.c_str(), param_str.c_str(), msg.function_value);
+                model_functions.push_back(msg);
+            } else if (!function_exists) {
+                ROS_INFO("KCL: (%s) Ignoring function update (%s%s) function does not exist", ros::this_node::getName().c_str(), msg.attribute_name.c_str(), param_str.c_str());
+            }
         }
         break;
 
@@ -482,8 +505,33 @@ namespace KCL_rosplan {
     /* fetching items */
     /*----------------*/
 
-    bool KnowledgeBase::getInstances(rosplan_knowledge_msgs::GetInstanceService::Request  &req, rosplan_knowledge_msgs::GetInstanceService::Response &res) {
+    void KnowledgeBase::getSubtypes(std::string &type, std::vector<std::string> &subtypes) {
 
+        // fetch types
+        rosplan_knowledge_msgs::GetDomainTypeService::Request  treq;
+        rosplan_knowledge_msgs::GetDomainTypeService::Response tres;
+        getTypes(treq,tres);
+
+        // produce type map
+        std::map<std::string, std::string> typemap;
+        for (int i=0; i<tres.types.size(); i++)
+            typemap[tres.types[i]] = tres.super_types[i];
+        
+        // loop to resolve types
+        bool finished = false;
+        while (!finished) {
+            finished = true;
+            for (int i=0; i<tres.types.size(); i++) {
+                if (tres.super_types[i]==type) subtypes.push_back(tres.types[i]);
+                typemap[tres.types[i]] = typemap[tres.super_types[i]];
+                if (""!=typemap[tres.types[i]]) finished = false;
+            }
+        }
+        subtypes.push_back(type);
+    }
+
+    bool KnowledgeBase::getInstances(rosplan_knowledge_msgs::GetInstanceService::Request  &req, rosplan_knowledge_msgs::GetInstanceService::Response &res) {
+    
         // fetch the instances of the correct type
         if(""==req.type_name) {
             std::map<std::string,std::vector<std::string> >::iterator iit;
@@ -493,23 +541,42 @@ namespace KCL_rosplan {
                     res.instances.push_back(iit->second[j]);
             }
             // constants
-            for(iit=domain_constants.begin(); iit != domain_constants.end(); iit++) {
-                for(size_t j=0; j<iit->second.size(); j++)
-                    res.instances.push_back(iit->second[j]);
+            if (req.include_constants) {
+                for(iit=domain_constants.begin(); iit != domain_constants.end(); iit++) {
+                    for(size_t j=0; j<iit->second.size(); j++)
+                        res.instances.push_back(iit->second[j]);
+                }
             }
         } else {
-            std::map<std::string,std::vector<std::string> >::iterator iit;
-            // objects
-            iit = model_instances.find(req.type_name);
-            if(iit != model_instances.end()) {
-                for(size_t j=0; j<iit->second.size(); j++)
-                    res.instances.push_back(iit->second[j]);
+
+            // fetch types
+            std::vector<string> alltypes;
+            if (req.include_subtypes) {
+                // request type and subtypes
+                getSubtypes(req.type_name, alltypes);
+            } else {
+                // request type only
+                alltypes.push_back(req.type_name);
             }
-            // constants
-            iit = domain_constants.find(req.type_name);
-            if(iit != domain_constants.end()) {
-                for(size_t j=0; j<iit->second.size(); j++)
-                    res.instances.push_back(iit->second[j]);
+
+            // add instances of all (sub)types
+            std::map<std::string,std::vector<std::string> >::iterator iit;
+            for(auto tit = alltypes.begin(); tit!=alltypes.end(); tit++) {
+
+                // objects
+                iit = model_instances.find(*tit);
+                if(iit != model_instances.end()) {
+                    for(size_t j=0; j<iit->second.size(); j++)
+                        res.instances.push_back(iit->second[j]);
+                }
+                // constants
+                if (req.include_constants) {
+                    iit = domain_constants.find(*tit);
+                    if(iit != domain_constants.end()) {
+                        for(size_t j=0; j<iit->second.size(); j++)
+                            res.instances.push_back(iit->second[j]);
+                    }
+                }
             }
         }
 
