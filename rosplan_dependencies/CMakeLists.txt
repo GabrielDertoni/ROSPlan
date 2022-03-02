@@ -69,9 +69,16 @@ add_dependencies(hddl_parser ${catkin_EXPORTED_TARGETS})
 ## Install ##
 #############
 
-# hddl parser is already installed under devel using the lines above
-# BISON_TARGET & FLEX_TARGET
-# see : $HOME/ros_ws/.../devel/.private/rosplan_dependencies/include/hddl_parser
+install(TARGETS hddl_parser
+        ARCHIVE DESTINATION ${CATKIN_PACKAGE_LIB_DESTINATION}
+        LIBRARY DESTINATION ${CATKIN_PACKAGE_LIB_DESTINATION}
+        RUNTIME DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION})
+
+## Mark cpp header files for installation
+install(DIRECTORY hddl_parser/include/ ${CATKIN_DEVEL_PREFIX}/include/hddl_parser/
+        DESTINATION ${CATKIN_GLOBAL_INCLUDE_DESTINATION}
+        FILES_MATCHING PATTERN "*.h*"
+        PATTERN ".svn" EXCLUDE)
 
 ########################################################################################################################
 ########################################################################################################################
