@@ -91,11 +91,16 @@ message(STATUS "[${PROJECT_NAME}] Preparing RDDL parser dependency...")
 ## Build ##
 ###########
 execute_process(COMMAND getconf LONG_BIT OUTPUT_VARIABLE LBITS)
-if (LBITS EQUAL 64)
-    SET (RDDL_CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -m64")
+execute_process(COMMAND uname -m COMMAND tr -d '\n' OUTPUT_VARIABLE ARCHITECTURE)
+if(${ARCHITECTURE} STREQUAL "aarch64")
+    SET (RDDL_CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -march=armv8-a")
 else()
-    SET (RDDL_CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -m32")
-endif(LBITS EQUAL 64)
+    if (LBITS EQUAL 64)
+        SET (RDDL_CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -m64")
+    else()
+        SET (RDDL_CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -m32")
+    endif(LBITS EQUAL 64)
+endif(${ARCH} STREQUAL "aarch64")
 SET (RDDL_CMAKE_CXX_FLAGS "${RDDL_CMAKE_CXX_FLAGS} -g -Wall -W -Wno-sign-compare -Wno-deprecated -ansi -pedantic -Werror -std=c++11 -O3 -DNDEBUG -fomit-frame-pointer -Wno-error=deprecated-copy")
 
 # Lexer and parser
